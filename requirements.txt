@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+python-multipart
+sqlalchemy
+psycopg2-binary
+python-dotenv
+numpy
+aiofiles
+Pillow
+opencv-python-headless
+pgvector
+insightface
+onnxruntime
+pydantic
+pydantic-settings
