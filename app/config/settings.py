@@ -7,5 +7,7 @@ class Settings(BaseSettings):
     max_match_results:   int   = 50
     max_selfie_bytes:    int   = 15 * 1024 * 1024
     frontend_origin:     str   = "http://localhost:3000"
+    face_det_size:        int = 1024
+    face_det_thresh:      float = 0.4
 
 settings = Settings()

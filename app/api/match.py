@@ -66,11 +66,17 @@ async def match_selfie(
          "threshold": settings.similarity_threshold, "max_results": settings.max_match_results}
     ).fetchall()
 
-    matches = [
-        MatchResultOut(
-            photo_id=row.photo_id, s3_url=row.s3_url,
-            thumbnail_url=row.thumbnail_url,
-            similarity_score=round(float(row.similarity_score), 4)
-        ) for row in results
-    ]
+    matches = []
+    seen_urls = set()
+    for row in results:
+        if row.s3_url not in seen_urls:
+            seen_urls.add(row.s3_url)
+            matches.append(
+                MatchResultOut(
+                    photo_id=row.photo_id,
+                    s3_url=row.s3_url,
+                    thumbnail_url=row.thumbnail_url,
+                    similarity_score=round(float(row.similarity_score), 4)
+                )
+            )
     return MatchResponse(matches=matches, total=len(matches))
