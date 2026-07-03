@@ -9,5 +9,9 @@ class Settings(BaseSettings):
     frontend_origin:     str   = "http://localhost:3000"
     face_det_size:        int = 1024
     face_det_thresh:      float = 0.4
+    jwt_secret:          str   = "change_me_in_production"
+    jwt_algorithm:       str   = "HS256"
+    jwt_expire_minutes:  int   = 10080
+    google_client_id:    str   = ""
 
 settings = Settings()
