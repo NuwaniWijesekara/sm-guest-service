@@ -1,19 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
-from fastapi import Depends
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from ..utils.security import get_photo_db
+from ..models.photographer_models import Event, EventStatus, Image
 
 router = APIRouter(prefix="/guest", tags=["Guest Access"])
-
-def get_db():
-    from ..main import SessionLocal
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 class EventOut(BaseModel):
     id: str
@@ -43,8 +36,7 @@ def _build_response(event, images) -> EventPageResponse:
     )
 
 @router.get("/validate/{qr_token}", response_model=EventPageResponse)
-def validate_token(qr_token: str, db: Session = Depends(get_db)):
-    from ..main import Event, EventStatus, Image
+def validate_token(qr_token: str, db: Session = Depends(get_photo_db)):
     event = db.query(Event).filter(Event.qr_token == qr_token).first()
     if not event:
         raise HTTPException(status_code=404, detail="Invalid QR code")
@@ -60,8 +52,7 @@ def validate_token(qr_token: str, db: Session = Depends(get_db)):
     return _build_response(event, deduped_images)
 
 @router.get("/{event_id}", response_model=EventPageResponse)
-def guest_by_id(event_id: str, db: Session = Depends(get_db)):
-    from ..main import Event, EventStatus, Image
+def guest_by_id(event_id: str, db: Session = Depends(get_photo_db)):
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")

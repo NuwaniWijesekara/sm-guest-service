@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from ..utils.security import verify_password, get_password_hash, create_access_token, get_db
-from ..main import GuestUser
+from ..utils.security import verify_password, get_password_hash, create_access_token, get_guest_db
+from ..models.guest_models import GuestUser
 
 router = APIRouter(prefix="/guest/auth", tags=["Guest Authentication"])
 
@@ -24,10 +24,10 @@ class TokenResponse(BaseModel):
     is_anonymous: bool
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def register(data: GuestRegister, db: Session = Depends(get_db)):
+def register(data: GuestRegister, db: Session = Depends(get_guest_db)):
     if not data.name or not data.email or not data.password:
         raise HTTPException(status_code=400, detail="Name, email, and password are required")
-    
+
     existing = db.query(GuestUser).filter(GuestUser.email == data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -40,10 +40,10 @@ def register(data: GuestRegister, db: Session = Depends(get_db)):
     return {"message": "Guest account created successfully", "user_id": user.id}
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: GuestLogin, db: Session = Depends(get_db)):
+def login(data: GuestLogin, db: Session = Depends(get_guest_db)):
     if not data.email or not data.password:
         raise HTTPException(status_code=400, detail="Email and password are required")
-        
+
     user = db.query(GuestUser).filter(GuestUser.email == data.email).first()
     if not user or user.is_anonymous or not verify_password(data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -57,7 +57,7 @@ def login(data: GuestLogin, db: Session = Depends(get_db)):
     return {"access_token": token, "token_type": "bearer", "is_anonymous": False}
 
 @router.post("/anonymous", response_model=TokenResponse)
-def login_anonymous(db: Session = Depends(get_db)):
+def login_anonymous(db: Session = Depends(get_guest_db)):
     user = GuestUser(is_anonymous=True)
     db.add(user)
     db.commit()
@@ -72,7 +72,7 @@ def login_anonymous(db: Session = Depends(get_db)):
     return {"access_token": token, "token_type": "bearer", "is_anonymous": True}
 
 @router.post("/google", response_model=TokenResponse)
-def login_google(data: GoogleLoginRequest, db: Session = Depends(get_db)):
+def login_google(data: GoogleLoginRequest, db: Session = Depends(get_guest_db)):
     from google.oauth2 import id_token
     from google.auth.transport import requests
     from ..config.settings import settings
@@ -81,7 +81,6 @@ def login_google(data: GoogleLoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Google id_token is required")
 
     try:
-        # Verify token using google-auth library
         idinfo = id_token.verify_oauth2_token(
             data.id_token,
             requests.Request(),
@@ -100,13 +99,11 @@ def login_google(data: GoogleLoginRequest, db: Session = Depends(get_db)):
 
     user = db.query(GuestUser).filter(GuestUser.email == email).first()
     if not user:
-        # Auto-register google user
         user = GuestUser(email=email, name=name, is_anonymous=False)
         db.add(user)
         db.commit()
         db.refresh(user)
     else:
-        # Sync name if missing
         if not user.name and name:
             user.name = name
             db.commit()

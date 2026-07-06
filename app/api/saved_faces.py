@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
-from ..utils.security import get_db, get_current_guest
-from ..main import SavedFace
+from ..utils.security import get_guest_db, get_current_guest
+from ..models.guest_models import SavedFace
 from ..services.face_engine import face_engine
 from ..config.settings import settings
 
@@ -24,7 +24,7 @@ class SavedFaceUpdate(BaseModel):
 
 @router.get("", response_model=list[SavedFaceOut])
 def list_saved_faces(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_guest_db),
     current_guest = Depends(get_current_guest)
 ):
     faces = db.query(SavedFace).filter(SavedFace.guest_user_id == current_guest.id).order_by(SavedFace.created_at.desc()).all()
@@ -34,7 +34,7 @@ def list_saved_faces(
 async def create_saved_face(
     nickname: str = Form(...),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_guest_db),
     current_guest = Depends(get_current_guest)
 ):
     if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
@@ -66,7 +66,7 @@ async def create_saved_face(
 def update_saved_face(
     face_id: str,
     data: SavedFaceUpdate,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_guest_db),
     current_guest = Depends(get_current_guest)
 ):
     face = db.query(SavedFace).filter(
@@ -84,7 +84,7 @@ def update_saved_face(
 @router.delete("/{face_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_saved_face(
     face_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_guest_db),
     current_guest = Depends(get_current_guest)
 ):
     face = db.query(SavedFace).filter(

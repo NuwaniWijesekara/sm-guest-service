@@ -20,16 +20,21 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.jwt_expire_minutes)
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.jwt_expire_minutes))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
-def get_db():
-    from ..main import SessionLocal
-    db = SessionLocal()
+def get_guest_db():
+    from ..main import GuestSessionLocal
+    db = GuestSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def get_photo_db():
+    from ..main import PhotographerSessionLocal
+    db = PhotographerSessionLocal()
     try:
         yield db
     finally:
@@ -37,7 +42,7 @@ def get_db():
 
 def get_current_guest(
     credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_guest_db)
 ):
     token = credentials.credentials
     try:
@@ -48,7 +53,7 @@ def get_current_guest(
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    from ..main import GuestUser
+    from ..models.guest_models import GuestUser
     guest = db.query(GuestUser).filter(GuestUser.id == guest_id).first()
     if not guest:
         raise HTTPException(status_code=401, detail="Guest user not found")
