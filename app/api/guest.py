@@ -43,13 +43,7 @@ def validate_token(qr_token: str, db: Session = Depends(get_photo_db)):
     if event.status != EventStatus.READY:
         raise HTTPException(status_code=409, detail="Event still processing")
     images = db.query(Image).filter(Image.event_id == event.id).order_by(Image.created_at).all()
-    seen = set()
-    deduped_images = []
-    for img in images:
-        if img.s3_url not in seen:
-            seen.add(img.s3_url)
-            deduped_images.append(img)
-    return _build_response(event, deduped_images)
+    return _build_response(event, images)  # no dedup needed — one row per photo, guaranteed
 
 @router.get("/{event_id}", response_model=EventPageResponse)
 def guest_by_id(event_id: str, db: Session = Depends(get_photo_db)):
@@ -59,10 +53,4 @@ def guest_by_id(event_id: str, db: Session = Depends(get_photo_db)):
     if event.status != EventStatus.READY:
         raise HTTPException(status_code=409, detail="Event still processing")
     images = db.query(Image).filter(Image.event_id == event.id).order_by(Image.created_at).all()
-    seen = set()
-    deduped_images = []
-    for img in images:
-        if img.s3_url not in seen:
-            seen.add(img.s3_url)
-            deduped_images.append(img)
-    return _build_response(event, deduped_images)
+    return _build_response(event, images)

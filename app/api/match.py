@@ -84,32 +84,29 @@ async def match_selfie(
     # pgvector similarity search — runs against photographer DB
     results = photo_db.execute(
         text("""
-            SELECT id AS photo_id, s3_url, thumbnail_url,
-                   1 - (face_embedding <=> CAST(:qv AS vector)) AS similarity_score
-            FROM images
-            WHERE event_id = :event_id
-              AND face_embedding IS NOT NULL
-              AND (face_embedding <=> CAST(:qv AS vector)) < :threshold
-            ORDER BY face_embedding <=> CAST(:qv AS vector) ASC
+            SELECT img.id AS photo_id, img.s3_url, img.thumbnail_url,
+                1 - MIN(f.embedding <=> CAST(:qv AS vector)) AS similarity_score
+            FROM faces f
+            JOIN images img ON img.id = f.image_id
+            WHERE img.event_id = :event_id
+            GROUP BY img.id, img.s3_url, img.thumbnail_url
+            HAVING MIN(f.embedding <=> CAST(:qv AS vector)) < :threshold
+            ORDER BY MIN(f.embedding <=> CAST(:qv AS vector)) ASC
             LIMIT :max_results
         """),
         {"qv": str(query_embedding.tolist()), "event_id": event_id,
-         "threshold": settings.similarity_threshold, "max_results": settings.max_match_results}
+        "threshold": settings.similarity_threshold, "max_results": settings.max_match_results}
     ).fetchall()
 
-    matches = []
-    seen_urls = set()
-    for row in results:
-        if row.s3_url not in seen_urls:
-            seen_urls.add(row.s3_url)
-            matches.append(
-                MatchResultOut(
-                    photo_id=row.photo_id,
-                    s3_url=row.s3_url,
-                    thumbnail_url=row.thumbnail_url,
-                    similarity_score=round(float(row.similarity_score), 4)
-                )
-            )
+    matches = [
+        MatchResultOut(
+            photo_id=row.photo_id,
+            s3_url=row.s3_url,
+            thumbnail_url=row.thumbnail_url,
+            similarity_score=round(float(row.similarity_score), 4)
+        )
+        for row in results
+    ]
 
     # Log search history — writes to guest DB, matched photos stored as JSON snapshot
     try:
