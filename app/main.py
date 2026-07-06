@@ -23,19 +23,25 @@ GuestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=guest_e
 photographer_engine = create_engine(settings.photographer_database_url, pool_pre_ping=True, pool_size=5, max_overflow=10)
 PhotographerSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=photographer_engine)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     with guest_engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.commit()
-    GuestBase.metadata.create_all(bind=guest_engine)   # only guest-owned tables — never touches photographer DB
+    GuestBase.metadata.create_all(bind=guest_engine)   # only guest-owned tables
 
     face_engine.load()
+
     from .services.cleanup import start_cleanup_scheduler
     start_cleanup_scheduler()
 
+    from .services.event_consumer import start_event_consumer
+    start_event_consumer()
+
     print("✓ Guest service running on :8002")
     yield
+
 
 app = FastAPI(title="ScanMe — Guest BFF", version="1.0.0", lifespan=lifespan)
 
@@ -58,6 +64,7 @@ app.include_router(guest_auth_router)
 app.include_router(saved_faces_router)
 app.include_router(guest_history_router)
 app.include_router(guest_router)
+
 
 @app.get("/health")
 def health():
