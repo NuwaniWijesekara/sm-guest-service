@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -13,6 +14,8 @@ class EventOut(BaseModel):
     name: str
     date: datetime
     cover_photo_url: Optional[str] = None
+    qr_token: Optional[str] = None
+    username: Optional[str] = None
     total_photos: int
     status: str
 
@@ -30,6 +33,7 @@ def _build_response(event, images) -> EventPageResponse:
         event=EventOut(
             id=event.id, name=event.name, date=event.date,
             cover_photo_url=event.cover_photo_url,
+            qr_token=event.qr_token, username=event.username,
             total_photos=len(images), status=event.status.value
         ),
         photos=[PhotoOut(id=img.id, s3_url=img.s3_url, thumbnail_url=img.thumbnail_url) for img in images]
@@ -37,17 +41,23 @@ def _build_response(event, images) -> EventPageResponse:
 
 @router.get("/validate/{qr_token}", response_model=EventPageResponse)
 def validate_token(qr_token: str, db: Session = Depends(get_photo_db)):
-    event = db.query(Event).filter(Event.qr_token == qr_token).first()
+    clean_token = qr_token.strip().lower().lstrip('@')
+    event = db.query(Event).filter(
+        or_(Event.qr_token == clean_token, Event.username == clean_token, Event.id == qr_token)
+    ).first()
     if not event:
-        raise HTTPException(status_code=404, detail="Invalid QR code")
+        raise HTTPException(status_code=404, detail="Invalid QR code or Collection Username")
     if event.status != EventStatus.READY:
         raise HTTPException(status_code=409, detail="Event still processing")
     images = db.query(Image).filter(Image.event_id == event.id).order_by(Image.created_at).all()
-    return _build_response(event, images)  # no dedup needed — one row per photo, guaranteed
+    return _build_response(event, images)
 
 @router.get("/{event_id}", response_model=EventPageResponse)
 def guest_by_id(event_id: str, db: Session = Depends(get_photo_db)):
-    event = db.query(Event).filter(Event.id == event_id).first()
+    clean_id = event_id.strip().lower().lstrip('@')
+    event = db.query(Event).filter(
+        or_(Event.id == event_id, Event.qr_token == clean_id, Event.username == clean_id)
+    ).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     if event.status != EventStatus.READY:
