@@ -7,8 +7,9 @@ logger = logging.getLogger(__name__)
 
 
 def cleanup_expired_records():
-    from ..main import GuestSessionLocal, SavedFace, SearchHistory
-
+    from ..main import GuestSessionLocal
+    from ..models.guest_models import SavedFace, SearchHistory
+    
     db = GuestSessionLocal()
     now = datetime.utcnow()
     try:
