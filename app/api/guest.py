@@ -28,15 +28,25 @@ class EventPageResponse(BaseModel):
     event: EventOut
     photos: list[PhotoOut]
 
+from ..services.s3 import s3_service
+
 def _build_response(event, images) -> EventPageResponse:
+    cover_url = s3_service.generate_presigned_url(event.cover_photo_url, expiration=3600) if event.cover_photo_url else None
     return EventPageResponse(
         event=EventOut(
             id=event.id, name=event.name, date=event.date,
-            cover_photo_url=event.cover_photo_url,
+            cover_photo_url=cover_url,
             qr_token=event.qr_token, username=event.username,
             total_photos=len(images), status=event.status.value
         ),
-        photos=[PhotoOut(id=img.id, s3_url=img.s3_url, thumbnail_url=img.thumbnail_url) for img in images]
+        photos=[
+            PhotoOut(
+                id=img.id,
+                s3_url=s3_service.generate_presigned_url(img.s3_url, expiration=3600),
+                thumbnail_url=s3_service.generate_presigned_url(img.thumbnail_url, expiration=3600) if img.thumbnail_url else None
+            )
+            for img in images
+        ]
     )
 
 @router.get("/validate/{qr_token}", response_model=EventPageResponse)

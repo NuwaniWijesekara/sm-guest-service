@@ -27,11 +27,12 @@ PhotographerSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     with guest_engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(text("ALTER TABLE saved_faces ADD COLUMN IF NOT EXISTS rekognition_face_id VARCHAR(255);"))
+        conn.execute(text("ALTER TABLE saved_faces DROP COLUMN IF EXISTS face_embedding;"))
+        conn.execute(text("ALTER TABLE search_history ADD COLUMN IF NOT EXISTS rekognition_face_id VARCHAR(255);"))
+        conn.execute(text("ALTER TABLE search_history DROP COLUMN IF EXISTS face_embedding;"))
         conn.commit()
     GuestBase.metadata.create_all(bind=guest_engine)   # only guest-owned tables
-
-    face_engine.load()
 
     from .services.cleanup import start_cleanup_scheduler
     start_cleanup_scheduler()

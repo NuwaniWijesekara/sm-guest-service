@@ -1,104 +1,101 @@
 import logging
-from io import BytesIO
-import cv2
-import numpy as np
-from PIL import Image, ImageOps
-from pillow_heif import register_heif_opener
-
-register_heif_opener()
+import boto3
+from botocore.exceptions import ClientError
+from ..config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class FaceEngine:
-    """Singleton InsightFace ArcFace wrapper — guest service (selfie side)."""
+    """Singleton AWS Rekognition service wrapper — guest service (selfie side)."""
     _instance = None
-    _app = None
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
+            cls._instance.client = boto3.client(
+                'rekognition',
+                aws_access_key_id=settings.aws_access_key_id,
+                aws_secret_access_key=settings.aws_secret_access_key,
+                region_name=settings.aws_region,
+            )
         return cls._instance
 
     def load(self):
-        if self._app is not None:
-            return
-        from insightface.app import FaceAnalysis
-        from ..config.settings import settings
-        logger.info("Loading InsightFace ArcFace model...")
-        self._app = FaceAnalysis(
-            name='buffalo_l',
-            providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
-        )
-        self._app.prepare(ctx_id=0, det_size=(settings.face_det_size, settings.face_det_size), det_thresh=settings.face_det_thresh)
-        logger.info(f"InsightFace model loaded — det_model.det_thresh = {self._app.det_model.det_thresh}")
+        """No-op retained for backwards compatibility."""
+        pass
 
-    def _to_bgr(self, image_bytes: bytes) -> np.ndarray:
-        pil = Image.open(BytesIO(image_bytes))
-        pil = ImageOps.exif_transpose(pil)
-        pil = pil.convert("RGB")
-        return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+    def search_faces_by_image(self, selfie_bytes: bytes, collection_id: str, threshold: float = 80.0) -> list[dict]:
+        """
+        Passes guest selfie bytes to boto3.client('rekognition').search_faces_by_image.
+        Returns list of matched dicts containing face_id and similarity score.
+        """
+        try:
+            response = self.client.search_faces_by_image(
+                CollectionId=collection_id,
+                Image={'Bytes': selfie_bytes},
+                FaceMatchThreshold=threshold,
+                MaxFaces=settings.max_match_results
+            )
+            matches = []
+            for face_match in response.get('FaceMatches', []):
+                matches.append({
+                    'face_id': face_match['Face']['FaceId'],
+                    'similarity': face_match.get('Similarity', 0.0)
+                })
+            logger.info(f"search_faces_by_image found {len(matches)} match(es) in collection {collection_id}")
+            return matches
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code in ('InvalidParameterException', 'InvalidImageFormatException') and 'No face' in str(e):
+                logger.warning(f"No face detected in selfie: {e}")
+                return []
+            elif error_code == 'ResourceNotFoundException':
+                logger.warning(f"Collection {collection_id} not found in Rekognition.")
+                return []
+            else:
+                logger.error(f"Rekognition search_faces_by_image error: {e}")
+                raise
 
-    def _normalize(self, vec: np.ndarray) -> np.ndarray:
-        norm = np.linalg.norm(vec)
-        return vec / norm if norm > 0 else vec
+    def search_faces(self, face_id: str, collection_id: str, threshold: float = 80.0) -> list[dict]:
+        """
+        Searches faces by an existing Rekognition FaceId.
+        """
+        try:
+            response = self.client.search_faces(
+                CollectionId=collection_id,
+                FaceId=face_id,
+                FaceMatchThreshold=threshold,
+                MaxFaces=settings.max_match_results
+            )
+            matches = []
+            for face_match in response.get('FaceMatches', []):
+                matches.append({
+                    'face_id': face_match['Face']['FaceId'],
+                    'similarity': face_match.get('Similarity', 0.0)
+                })
+            return matches
+        except ClientError as e:
+            logger.warning(f"search_faces error for {face_id} in {collection_id}: {e}")
+            return []
 
-    def _retry_lower_threshold(self, bgr):
-        original_thresh = self._app.det_model.det_thresh
-        for thresh in (0.3, 0.2, 0.15):
-            self._app.det_model.det_thresh = thresh
-            faces = self._app.get(bgr)
-            if faces:
-                logger.info(f"Face found at threshold {thresh}")
-                self._app.det_model.det_thresh = original_thresh
-                return faces
-        self._app.det_model.det_thresh = original_thresh
-        return []
-
-    def _retry_with_padding(self, bgr, pad_ratio=0.4):
-        """Handles tightly-cropped selfies/photos where the face fills most
-        of the frame. Uses BORDER_REPLICATE (edge smear), not REFLECT —
-        reflecting can mirror facial features into the padding and cause
-        phantom duplicate detections."""
-        h, w = bgr.shape[:2]
-        pad_h, pad_w = int(h * pad_ratio), int(w * pad_ratio)
-        padded = cv2.copyMakeBorder(bgr, pad_h, pad_h, pad_w, pad_w, cv2.BORDER_REPLICATE)
-
-        original_thresh = self._app.det_model.det_thresh
-        for thresh in (original_thresh, 0.3, 0.2):
-            self._app.det_model.det_thresh = thresh
-            faces = self._app.get(padded)
-            if faces:
-                self._app.det_model.det_thresh = original_thresh
-                # Discard any detection whose center falls in the padding
-                # margin — real faces are always within the original bounds.
-                valid = []
-                for f in faces:
-                    x0, y0, x1, y1 = f.bbox
-                    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-                    if pad_w <= cx <= pad_w + w and pad_h <= cy <= pad_h + h:
-                        valid.append(f)
-                if valid:
-                    logger.info(f"Face found after padding retry at threshold {thresh}")
-                    return valid
-        self._app.det_model.det_thresh = original_thresh
-        return []
-
-    def extract_single_embedding(self, image_bytes: bytes) -> np.ndarray | None:
-        if self._app is None:
-            self.load()
-        bgr = self._to_bgr(image_bytes)
-        faces = self._app.get(bgr)
-
-        if not faces:
-            faces = self._retry_lower_threshold(bgr)
-
-        if not faces:
-            faces = self._retry_with_padding(bgr)
-
-        if not faces:
+    def index_selfie(self, selfie_bytes: bytes, collection_id: str) -> str | None:
+        """
+        Indexes a selfie image bytes and returns the primary FaceId string.
+        """
+        try:
+            response = self.client.index_faces(
+                CollectionId=collection_id,
+                Image={'Bytes': selfie_bytes},
+                DetectionAttributes=['DEFAULT'],
+                MaxFaces=1,
+                QualityFilter='AUTO'
+            )
+            face_records = response.get('FaceRecords', [])
+            if face_records:
+                return face_records[0]['Face']['FaceId']
             return None
-
-        largest = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
-        return self._normalize(largest.embedding)
+        except ClientError as e:
+            logger.error(f"Failed to index selfie: {e}")
+            return None
 
 face_engine = FaceEngine()

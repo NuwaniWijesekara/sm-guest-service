@@ -44,17 +44,17 @@ async def create_saved_face(
     if len(file_bytes) > settings.max_selfie_bytes:
         raise HTTPException(status_code=413, detail="Selfie too large")
 
-    query_embedding = face_engine.extract_single_embedding(file_bytes)
+    face_id = face_engine.index_selfie(file_bytes, collection_id="saved-faces")
     del file_bytes
 
-    if query_embedding is None:
+    if face_id is None:
         raise HTTPException(status_code=422, detail="No face detected in selfie")
 
     expires_at = datetime.utcnow() + timedelta(days=30)
     face = SavedFace(
         guest_user_id=current_guest.id,
         nickname=nickname,
-        face_embedding=query_embedding.tolist(),
+        rekognition_face_id=face_id,
         expires_at=expires_at
     )
     db.add(face)
