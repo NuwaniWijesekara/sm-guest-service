@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
 from ..utils.security import get_current_user, get_guest_db, get_photo_db
-from ..models.photographer_models import Event, EventStatus, Image, Face
+from ..models.photographer_models import Event, EventStatus, Image, Face, User, EventCollaborator
 from ..models.guest_models import SavedFace, SearchHistory
 from ..config.settings import settings
 from ..services.face_engine import face_engine
@@ -23,6 +23,25 @@ class MatchResponse(BaseModel):
     matches: list[MatchResultOut]
     total: int
 
+def _has_event_access(photo_db: Session, event: Event, user_id: str) -> bool:
+    """Owner or any collaborator tier (VIEW_ONLY included) grants access.
+
+    Only used to gate the account-level reference-face path below — a
+    fresh per-search selfie or a saved_face_id stay open to anyone with
+    the event's QR code/link/username, same as always. The reference face
+    is a durable, reusable identity artifact tied to the caller's account,
+    so it's only usable against events they actually have a relationship
+    with, unlike an ephemeral selfie that's discarded after the search.
+    """
+    if event.owner_id == user_id:
+        return True
+    link = (
+        photo_db.query(EventCollaborator)
+        .filter(EventCollaborator.event_id == event.id, EventCollaborator.user_id == user_id)
+        .first()
+    )
+    return link is not None
+
 @router.post("/selfie", response_model=MatchResponse)
 async def match_selfie(
     selfie: Optional[UploadFile] = File(None),
@@ -32,8 +51,6 @@ async def match_selfie(
     guest_db: Session = Depends(get_guest_db),
     current_user = Depends(get_current_user)
 ):
-    if selfie is None and saved_face_id is None:
-        raise HTTPException(status_code=400, detail="Must provide either selfie image or saved_face_id")
     if selfie is not None and saved_face_id is not None:
         raise HTTPException(status_code=400, detail="Cannot provide both selfie image and saved_face_id")
 
@@ -68,7 +85,7 @@ async def match_selfie(
 
         face.expires_at = datetime.utcnow() + timedelta(days=30)
         guest_db.commit()
-    else:
+    elif selfie is not None:
         if selfie.content_type not in ["image/jpeg", "image/png", "image/webp"]:
             raise HTTPException(status_code=415, detail="Invalid image type")
 
@@ -103,6 +120,26 @@ async def match_selfie(
         guest_db.add(face)
         guest_db.commit()
         guest_db.refresh(face)
+    else:
+        # Neither a fresh selfie nor a saved_face_id — fall back to the
+        # caller's account-level reference face.
+        if not _has_event_access(photo_db, event, current_user.id):
+            raise HTTPException(status_code=403, detail="You don't have access to search this event.")
+
+        profile_user = photo_db.query(User).filter(User.id == current_user.id).first()
+        if not profile_user or not profile_user.reference_face_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Please upload a reference face to your profile first.",
+            )
+
+        reference_bytes = s3_service.download_bytes(profile_user.reference_face_url)
+        raw_matches = face_engine.search_faces_by_image(
+            selfie_bytes=reference_bytes,
+            collection_id=event_id,
+            threshold=80.0
+        )
+        primary_face_id = raw_matches[0]['face_id'] if raw_matches else None
 
     # Extract matched FaceIds from Rekognition response and query DB for matching image URLs
     matched_face_ids = [m['face_id'] for m in raw_matches]
