@@ -15,21 +15,15 @@ class EventStatus(str, enum.Enum):
     READY      = "ready"
     FAILED     = "failed"
 
-class CollaboratorPermission(str, enum.Enum):
-    VIEW_ONLY  = "VIEW_ONLY"
-    CAN_UPLOAD = "CAN_UPLOAD"
-    ADMIN      = "ADMIN"
-
 class User(PhotographerBase):
     __tablename__ = "users"
-    id                 = Column(String, primary_key=True, default=_uuid)
-    name               = Column(String, nullable=True)
-    email              = Column(String, unique=True, index=True, nullable=True)
-    password_hash      = Column(String, nullable=True)
-    is_anonymous       = Column(Boolean, default=False, nullable=False)
-    reference_face_url = Column(String, nullable=True)
-    created_at         = Column(DateTime, default=datetime.utcnow)
-    events             = relationship("Event", back_populates="owner", cascade="all, delete-orphan")
+    id              = Column(String, primary_key=True, default=_uuid)
+    name            = Column(String, nullable=True)
+    email           = Column(String, unique=True, index=True, nullable=True)
+    password_hash   = Column(String, nullable=True)
+    is_anonymous    = Column(Boolean, default=False, nullable=False)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    events          = relationship("Event", back_populates="owner", cascade="all, delete-orphan")
 
 class Event(PhotographerBase):
     __tablename__ = "events"
@@ -65,11 +59,3 @@ class Face(PhotographerBase):
     rekognition_face_id = Column(String, nullable=False, index=True)
     created_at          = Column(DateTime, default=datetime.utcnow)
     image               = relationship("Image", back_populates="faces")
-
-class EventCollaborator(PhotographerBase):
-    __tablename__ = "event_collaborators"
-    id         = Column(String, primary_key=True, default=_uuid)
-    event_id   = Column(String, ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id    = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    permission = Column(SAEnum(CollaboratorPermission), nullable=False, default=CollaboratorPermission.VIEW_ONLY)
-    created_at = Column(DateTime, default=datetime.utcnow)

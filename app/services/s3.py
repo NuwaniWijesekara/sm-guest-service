@@ -56,14 +56,6 @@ class S3Service:
             key = clean_url.lstrip('/')
         return unquote(key)
 
-    def download_bytes(self, url_or_key: str) -> bytes:
-        """Fetches an object's raw bytes — used to pull a user's saved
-        reference face (photographer-service's bucket, read here) for
-        matching against an event's Rekognition collection."""
-        key = self._extract_key(url_or_key)
-        response = self.client.get_object(Bucket=self.bucket, Key=key)
-        return response["Body"].read()
-
     def generate_presigned_url(self, url_or_key: str | None, expiration: int = 3600) -> str | None:
         if not url_or_key:
             return None
