@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-from ..utils.security import get_guest_db, get_photo_db, get_current_guest
+from ..utils.security import get_guest_db, get_photo_db, get_current_user
 from ..models.guest_models import SearchHistory
 from ..models.photographer_models import Event
 
@@ -36,10 +36,10 @@ class SearchHistoryOut(BaseModel):
 def get_search_history(
     guest_db: Session = Depends(get_guest_db),
     photo_db: Session = Depends(get_photo_db),
-    current_guest = Depends(get_current_guest)
+    current_user = Depends(get_current_user)
 ):
     history = guest_db.query(SearchHistory).filter(
-        SearchHistory.guest_user_id == current_guest.id
+        SearchHistory.user_id == current_user.id
     ).order_by(SearchHistory.created_at.desc()).all()
 
     event_ids = {h.event_id for h in history}

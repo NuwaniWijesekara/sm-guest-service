@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 from .config.settings import settings
 from .services.face_engine import face_engine
-from .models.guest_models import GuestBase, GuestUser, SavedFace, SearchHistory
+from .models.guest_models import GuestBase, SavedFace, SearchHistory
 from .models.photographer_models import PhotographerBase, Event, EventStatus, Image
 
 # ── Guest DB (owned — read/write) ────────────────────────────
@@ -31,6 +31,21 @@ async def lifespan(app: FastAPI):
         conn.execute(text("ALTER TABLE saved_faces DROP COLUMN IF EXISTS face_embedding;"))
         conn.execute(text("ALTER TABLE search_history ADD COLUMN IF NOT EXISTS rekognition_face_id VARCHAR(255);"))
         conn.execute(text("ALTER TABLE search_history DROP COLUMN IF EXISTS face_embedding;"))
+
+        # ── Unified User Model migration ──
+        # guest_users no longer exists (merged into sm-photographer-service's
+        # `users`), so saved_faces/search_history drop their FK to it and
+        # keep a plain user_id string instead (see models/guest_models.py).
+        for _table in ("saved_faces", "search_history"):
+            conn.execute(text(f"ALTER TABLE {_table} DROP CONSTRAINT IF EXISTS {_table}_guest_user_id_fkey;"))
+            conn.execute(text(f"""
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='{_table}' AND column_name='guest_user_id')
+                    THEN ALTER TABLE {_table} RENAME COLUMN guest_user_id TO user_id; END IF;
+                END $$;
+            """))
+        conn.execute(text("DROP TABLE IF EXISTS guest_users;"))
         conn.commit()
     GuestBase.metadata.create_all(bind=guest_engine)   # only guest-owned tables
 
@@ -56,12 +71,10 @@ app.add_middleware(
 
 from .api.guest import router as guest_router
 from .api.match import router as match_router
-from .api.auth import router as guest_auth_router
 from .api.saved_faces import router as saved_faces_router
 from .api.history import router as guest_history_router
 
 app.include_router(match_router)
-app.include_router(guest_auth_router)
 app.include_router(saved_faces_router)
 app.include_router(guest_history_router)
 app.include_router(guest_router)

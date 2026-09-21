@@ -4,7 +4,7 @@ from sqlalchemy import or_
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
-from ..utils.security import get_current_guest, get_guest_db, get_photo_db
+from ..utils.security import get_current_user, get_guest_db, get_photo_db
 from ..models.photographer_models import Event, EventStatus, Image, Face
 from ..models.guest_models import SavedFace, SearchHistory
 from ..config.settings import settings
@@ -30,7 +30,7 @@ async def match_selfie(
     event_id: str = Form(...),
     photo_db: Session = Depends(get_photo_db),
     guest_db: Session = Depends(get_guest_db),
-    current_guest = Depends(get_current_guest)
+    current_user = Depends(get_current_user)
 ):
     if selfie is None and saved_face_id is None:
         raise HTTPException(status_code=400, detail="Must provide either selfie image or saved_face_id")
@@ -53,7 +53,7 @@ async def match_selfie(
     if saved_face_id:
         face = guest_db.query(SavedFace).filter(
             SavedFace.id == saved_face_id,
-            SavedFace.guest_user_id == current_guest.id
+            SavedFace.user_id == current_user.id
         ).first()
         if not face:
             raise HTTPException(status_code=404, detail="Saved face not found")
@@ -95,7 +95,7 @@ async def match_selfie(
 
         now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
         face = SavedFace(
-            guest_user_id=current_guest.id,
+            user_id=current_user.id,
             nickname=f"Search Selfie - {now_str}",
             rekognition_face_id=primary_face_id,
             expires_at=datetime.utcnow() + timedelta(days=30)
@@ -137,10 +137,10 @@ async def match_selfie(
 
     # Log search history — writes to guest DB
     try:
-        expires_at = datetime.utcnow() + timedelta(hours=24) if current_guest.is_anonymous else None
+        expires_at = datetime.utcnow() + timedelta(hours=24) if current_user.is_anonymous else None
 
         history = SearchHistory(
-            guest_user_id=current_guest.id,
+            user_id=current_user.id,
             event_id=event_id,
             rekognition_face_id=primary_face_id,
             matched_photos=[
