@@ -1,22 +1,28 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime, timedelta
+from ..utils.security import CurrentUser, get_current_user, get_guest_db, get_photo_db
+from ..models.photographer_models import EventStatus, Image, Face
+from ..models.guest_models import SavedFace, SearchHistory
+from ..config.settings import settings
+from ..services.face_engine import face_engine
+from ..services.s3 import s3_service
+from ..utils.access import find_event, require_gallery_access
 
 router = APIRouter(prefix="/match", tags=["Selfie Matching"])
+logger = logging.getLogger(__name__)
 
-def get_db():
-    from ..main import SessionLocal
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Rekognition FaceMatchThreshold (0–100). Deliberately a constant rather than
+# a setting: the old SIMILARITY_THRESHOLD env var held an InsightFace cosine
+# value (0.4), which as a Rekognition threshold would match nearly anyone.
+MATCH_SIMILARITY_THRESHOLD = 80.0
 
 class MatchResultOut(BaseModel):
     photo_id: str
-    s3_url: str
+    display_url: str
     thumbnail_url: Optional[str] = None
     similarity_score: float
 
@@ -26,51 +32,133 @@ class MatchResponse(BaseModel):
 
 @router.post("/selfie", response_model=MatchResponse)
 async def match_selfie(
-    selfie: UploadFile = File(...),
+    selfie: Optional[UploadFile] = File(None),
+    saved_face_id: Optional[str] = Form(None),
     event_id: str = Form(...),
-    db: Session = Depends(get_db)
+    photo_db: Session = Depends(get_photo_db),
+    guest_db: Session = Depends(get_guest_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
-    from ..main import Event, EventStatus, settings
-    from ..services.face_engine import face_engine
+    if selfie is None and saved_face_id is None:
+        raise HTTPException(status_code=400, detail="Must provide either selfie image or saved_face_id")
+    if selfie is not None and saved_face_id is not None:
+        raise HTTPException(status_code=400, detail="Cannot provide both selfie image and saved_face_id")
 
-    if selfie.size and selfie.size > settings.max_selfie_bytes:
-        raise HTTPException(status_code=413, detail="Selfie too large")
-    if selfie.content_type not in ["image/jpeg", "image/png", "image/webp"]:
-        raise HTTPException(status_code=415, detail="Invalid image type")
-
-    event = db.query(Event).filter(Event.id == event_id).first()
+    event = find_event(photo_db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    require_gallery_access(photo_db, event, current_user)
     if event.status != EventStatus.READY:
         raise HTTPException(status_code=409, detail="Event still processing")
+    event_id = event.id
 
-    selfie_bytes = await selfie.read()
-    query_embedding = face_engine.extract_single_embedding(selfie_bytes)
-    del selfie_bytes
+    raw_matches = []
+    primary_face_id = None
 
-    if query_embedding is None:
-        raise HTTPException(status_code=422, detail="No face detected in selfie")
+    if saved_face_id:
+        face = guest_db.query(SavedFace).filter(
+            SavedFace.id == saved_face_id,
+            SavedFace.user_id == current_user.id
+        ).first()
+        if not face:
+            raise HTTPException(status_code=404, detail="Saved face not found")
 
-    results = db.execute(
-        text("""
-            SELECT id AS photo_id, s3_url, thumbnail_url,
-                   1 - (face_embedding <=> CAST(:qv AS vector)) AS similarity_score
-            FROM images
-            WHERE event_id = :event_id
-              AND face_embedding IS NOT NULL
-              AND (face_embedding <=> CAST(:qv AS vector)) < :threshold
-            ORDER BY face_embedding <=> CAST(:qv AS vector) ASC
-            LIMIT :max_results
-        """),
-        {"qv": str(query_embedding.tolist()), "event_id": event_id,
-         "threshold": settings.similarity_threshold, "max_results": settings.max_match_results}
-    ).fetchall()
+        primary_face_id = face.rekognition_face_id
+        if primary_face_id:
+            raw_matches = face_engine.search_faces(
+                face_id=primary_face_id,
+                collection_id=event_id,
+                threshold=MATCH_SIMILARITY_THRESHOLD
+            )
 
-    matches = [
-        MatchResultOut(
-            photo_id=row.photo_id, s3_url=row.s3_url,
-            thumbnail_url=row.thumbnail_url,
-            similarity_score=round(float(row.similarity_score), 4)
-        ) for row in results
-    ]
+        face.expires_at = datetime.utcnow() + timedelta(days=30)
+        guest_db.commit()
+    else:
+        if selfie.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+            raise HTTPException(status_code=415, detail="Invalid image type")
+
+        selfie_bytes = await selfie.read()
+        if len(selfie_bytes) > settings.max_selfie_bytes:
+            raise HTTPException(status_code=413, detail="Selfie too large")
+
+        # Pass guest's selfie bytes to AWS Rekognition search_faces_by_image
+        raw_matches = face_engine.search_faces_by_image(
+            selfie_bytes=selfie_bytes,
+            collection_id=event_id,
+            threshold=MATCH_SIMILARITY_THRESHOLD
+        )
+
+        if raw_matches:
+            primary_face_id = raw_matches[0]['face_id']
+        else:
+            primary_face_id = face_engine.index_selfie(selfie_bytes, collection_id=event_id)
+
+        del selfie_bytes
+
+        if not raw_matches and not primary_face_id:
+            raise HTTPException(status_code=422, detail="No face detected in selfie")
+
+        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        face = SavedFace(
+            user_id=current_user.id,
+            nickname=f"Search Selfie - {now_str}",
+            rekognition_face_id=primary_face_id,
+            expires_at=datetime.utcnow() + timedelta(days=30)
+        )
+        guest_db.add(face)
+        guest_db.commit()
+        guest_db.refresh(face)
+
+    # Extract matched FaceIds from Rekognition response and query DB for matching image URLs
+    matched_face_ids = [m['face_id'] for m in raw_matches]
+    similarity_map = {m['face_id']: m['similarity'] for m in raw_matches}
+
+    matches = []
+    if matched_face_ids:
+        rows = photo_db.query(
+            Image.id.label("photo_id"),
+            Image.s3_url,
+            Image.enhanced_url,
+            Image.thumbnail_url,
+            Face.rekognition_face_id
+        ).join(Face, Face.image_id == Image.id)\
+         .filter(Image.event_id == event_id, Face.rekognition_face_id.in_(matched_face_ids))\
+         .all()
+
+        photo_dict = {}
+        for row in rows:
+            score = similarity_map.get(row.rekognition_face_id, MATCH_SIMILARITY_THRESHOLD)
+            if row.photo_id not in photo_dict or score > photo_dict[row.photo_id]["similarity_score"]:
+                photo_dict[row.photo_id] = {
+                    "photo_id": row.photo_id,
+                    "display_url": s3_service.display_url(row.enhanced_url, row.s3_url, expiration=settings.photo_url_ttl_seconds),
+                    "thumbnail_url": s3_service.generate_presigned_url(row.thumbnail_url, expiration=settings.photo_url_ttl_seconds) if row.thumbnail_url else None,
+                    "similarity_score": round(float(score), 4)
+                }
+
+        matches = [MatchResultOut(**item) for item in photo_dict.values()]
+        matches.sort(key=lambda x: x.similarity_score, reverse=True)
+        if settings.max_match_results:
+            matches = matches[:settings.max_match_results]
+
+    # Log search history — writes to guest DB
+    try:
+        expires_at = datetime.utcnow() + timedelta(hours=24) if current_user.is_anonymous else None
+
+        history = SearchHistory(
+            user_id=current_user.id,
+            event_id=event_id,
+            rekognition_face_id=primary_face_id,
+            matched_photos=[
+                {"id": m.photo_id, "display_url": m.display_url, "thumbnail_url": m.thumbnail_url}
+                for m in matches
+            ],
+            expires_at=expires_at
+        )
+        guest_db.add(history)
+        guest_db.commit()
+    except Exception as e:
+        guest_db.rollback()
+        logger.error(f"Failed to log search history: {e}")
+
     return MatchResponse(matches=matches, total=len(matches))

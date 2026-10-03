@@ -170,7 +170,12 @@ coverage.xml
 # ============================================
 # ML / AI models
 # ============================================
-models/
+# This service calls AWS Rekognition (see app/services/face_engine.py) —
+# there is no local model-weights directory today. If one is added later,
+# scope its ignore to that exact path (e.g. /ml-models/), never a bare
+# `models/`: that pattern previously matched app/models/ too and silently
+# kept the SQLAlchemy model modules (guest_models.py, photographer_models.py)
+# out of git history entirely.
 *.pkl
 *.joblib
 *.h5

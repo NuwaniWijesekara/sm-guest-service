@@ -16,9 +16,6 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download InsightFace model (optional - speeds up first request)
-RUN python -c "from insightface.app import FaceAnalysis; FaceAnalysis(name='buffalo_l')" || true
-
 COPY . .
 
 EXPOSE 8002

@@ -4,12 +4,8 @@ python-multipart
 sqlalchemy
 psycopg2-binary
 python-dotenv
-numpy
-aiofiles
-Pillow
-opencv-python-headless
-pgvector
-insightface
-onnxruntime
+boto3
 pydantic
 pydantic-settings
+python-jose[cryptography]
+redis
