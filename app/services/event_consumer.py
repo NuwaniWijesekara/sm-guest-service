@@ -31,8 +31,13 @@ def ensure_group():
 
 
 def handle_event_deleted(event_id: str):
+    """Prune everything guest-side that belonged to a deleted event: its
+    search history and its Rekognition face collection (the event id), which
+    holds the faces indexed from its photos plus any guest selfies indexed
+    during searches — biometric data that must not outlive the event."""
     from ..main import GuestSessionLocal
     from ..models.guest_models import SearchHistory
+    from .face_engine import face_engine
 
     db = GuestSessionLocal()
     try:
@@ -44,6 +49,8 @@ def handle_event_deleted(event_id: str):
         raise
     finally:
         db.close()
+    # Raises on failure, so the message stays un-acked and is retried.
+    face_engine.delete_collection(event_id)
 
 
 def consume_loop():

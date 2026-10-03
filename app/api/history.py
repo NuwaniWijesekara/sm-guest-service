@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-from ..utils.security import get_guest_db, get_photo_db, get_current_user
+from ..utils.security import CurrentUser, get_guest_db, get_photo_db, get_current_user
 from ..models.guest_models import SearchHistory
 from ..models.photographer_models import Event
 
@@ -38,7 +38,7 @@ class SearchHistoryOut(BaseModel):
 def get_search_history(
     guest_db: Session = Depends(get_guest_db),
     photo_db: Session = Depends(get_photo_db),
-    current_user = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     history = guest_db.query(SearchHistory).filter(
         SearchHistory.user_id == current_user.id
@@ -47,11 +47,14 @@ def get_search_history(
     event_ids = {h.event_id for h in history}
     events = {e.id: e for e in photo_db.query(Event).filter(Event.id.in_(event_ids)).all()} if event_ids else {}
 
+    # Access can be revoked (or an event switched to invite-only) after a
+    # search ran — never re-serve photos the caller can't see now. Checked
+    # once per event, not once per history row.
+    allowed = {eid: has_gallery_access(photo_db, ev, current_user) for eid, ev in events.items()}
+
     res = []
     for h in history:
-        # Access can be revoked (or an event switched to invite-only) after
-        # the search ran — never re-serve photos the caller can't see now.
-        if h.event_id in events and not has_gallery_access(photo_db, events[h.event_id], current_user):
+        if not allowed.get(h.event_id, True):
             continue
         ev_out = None
         if h.event_id in events:

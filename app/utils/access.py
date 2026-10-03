@@ -11,11 +11,21 @@ search history) goes through this module, so the rule lives in one place.
 """
 from typing import Optional
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
-from ..models.photographer_models import EventCollaborator
+from ..models.photographer_models import Event, EventCollaborator
 from .security import CurrentUser
 
 PUBLIC = "public"
+
+
+def find_event(db: Session, key: str) -> Optional[Event]:
+    """Resolve whatever a guest has — event id, QR token or collection
+    username (with or without a leading @, any case) — to the event."""
+    clean = key.strip().lower().lstrip("@")
+    return db.query(Event).filter(
+        or_(Event.id == key, Event.qr_token == clean, Event.username == clean)
+    ).first()
 
 
 def _denial(event, user: Optional[CurrentUser], db: Session) -> Optional[HTTPException]:

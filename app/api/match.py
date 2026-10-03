@@ -1,18 +1,24 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
-from ..utils.security import get_current_user, get_guest_db, get_photo_db
-from ..models.photographer_models import Event, EventStatus, Image, Face
+from ..utils.security import CurrentUser, get_current_user, get_guest_db, get_photo_db
+from ..models.photographer_models import EventStatus, Image, Face
 from ..models.guest_models import SavedFace, SearchHistory
 from ..config.settings import settings
 from ..services.face_engine import face_engine
 from ..services.s3 import s3_service
-from ..utils.access import require_gallery_access
+from ..utils.access import find_event, require_gallery_access
 
 router = APIRouter(prefix="/match", tags=["Selfie Matching"])
+logger = logging.getLogger(__name__)
+
+# Rekognition FaceMatchThreshold (0–100). Deliberately a constant rather than
+# a setting: the old SIMILARITY_THRESHOLD env var held an InsightFace cosine
+# value (0.4), which as a Rekognition threshold would match nearly anyone.
+MATCH_SIMILARITY_THRESHOLD = 80.0
 
 class MatchResultOut(BaseModel):
     photo_id: str
@@ -31,17 +37,14 @@ async def match_selfie(
     event_id: str = Form(...),
     photo_db: Session = Depends(get_photo_db),
     guest_db: Session = Depends(get_guest_db),
-    current_user = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     if selfie is None and saved_face_id is None:
         raise HTTPException(status_code=400, detail="Must provide either selfie image or saved_face_id")
     if selfie is not None and saved_face_id is not None:
         raise HTTPException(status_code=400, detail="Cannot provide both selfie image and saved_face_id")
 
-    clean_event_id = event_id.strip().lower().lstrip('@')
-    event = photo_db.query(Event).filter(
-        or_(Event.id == event_id, Event.qr_token == clean_event_id, Event.username == clean_event_id)
-    ).first()
+    event = find_event(photo_db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     require_gallery_access(photo_db, event, current_user)
@@ -65,7 +68,7 @@ async def match_selfie(
             raw_matches = face_engine.search_faces(
                 face_id=primary_face_id,
                 collection_id=event_id,
-                threshold=80.0
+                threshold=MATCH_SIMILARITY_THRESHOLD
             )
 
         face.expires_at = datetime.utcnow() + timedelta(days=30)
@@ -82,7 +85,7 @@ async def match_selfie(
         raw_matches = face_engine.search_faces_by_image(
             selfie_bytes=selfie_bytes,
             collection_id=event_id,
-            threshold=80.0
+            threshold=MATCH_SIMILARITY_THRESHOLD
         )
 
         if raw_matches:
@@ -124,7 +127,7 @@ async def match_selfie(
 
         photo_dict = {}
         for row in rows:
-            score = similarity_map.get(row.rekognition_face_id, 80.0)
+            score = similarity_map.get(row.rekognition_face_id, MATCH_SIMILARITY_THRESHOLD)
             if row.photo_id not in photo_dict or score > photo_dict[row.photo_id]["similarity_score"]:
                 photo_dict[row.photo_id] = {
                     "photo_id": row.photo_id,
@@ -156,6 +159,6 @@ async def match_selfie(
         guest_db.commit()
     except Exception as e:
         guest_db.rollback()
-        print(f"Failed to log search history: {e}")
+        logger.error(f"Failed to log search history: {e}")
 
     return MatchResponse(matches=matches, total=len(matches))

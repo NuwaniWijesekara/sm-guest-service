@@ -10,18 +10,16 @@ class Settings(BaseSettings):
     aws_region:                str = "ap-south-1"
     s3_bucket_name:            str = ""
     aws_s3_bucket_name:        str = ""
-    similarity_threshold:      float = 80.0
     max_match_results:         int   = 50
     max_selfie_bytes:          int   = 15 * 1024 * 1024
     frontend_origin:           str   = "http://localhost:3000"
-    face_det_size:             int   = 1024
-    face_det_thresh:           float = 0.4
-    jwt_secret:                str   = "change_me_in_production"
+    # Required — must match sm-photographer-service (the token issuer). No
+    # default, so a missing JWT_SECRET fails at startup instead of accepting
+    # tokens signed with a publicly known value.
+    jwt_secret:                str
     jwt_algorithm:             str   = "HS256"
-    jwt_expire_minutes:        int   = 10080
-    google_client_id:          str   = ""
     # Lifetime of presigned photo URLs handed to guests. Kept short so a
     # leaked/forwarded URL stops working soon after access is revoked.
-    photo_url_ttl_seconds:     int   = 900
+    photo_url_ttl_seconds:     int   = 3600
 
 settings = Settings()

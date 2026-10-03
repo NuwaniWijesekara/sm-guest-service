@@ -11,9 +11,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from .config.settings import settings
-from .services.face_engine import face_engine
-from .models.guest_models import GuestBase, SavedFace, SearchHistory
-from .models.photographer_models import PhotographerBase, Event, EventStatus, Image
+from .models.guest_models import GuestBase
 
 # ── Guest DB (owned — read/write) ────────────────────────────
 guest_engine = create_engine(settings.guest_database_url, pool_pre_ping=True, pool_size=10, max_overflow=20)

@@ -1,13 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
 from ..utils.security import CurrentUser, get_optional_user, get_photo_db
-from ..utils.access import require_gallery_access
+from ..utils.access import find_event, require_gallery_access
 from ..config.settings import settings
-from ..models.photographer_models import Event, EventStatus, Image
+from ..models.photographer_models import EventStatus, Image
 
 router = APIRouter(prefix="/guest", tags=["Guest Access"])
 
@@ -51,23 +50,23 @@ def _build_response(event, images) -> EventPageResponse:
         ]
     )
 
+def _gallery(db: Session, key: str, user: Optional[CurrentUser], not_found: str) -> EventPageResponse:
+    event = find_event(db, key)
+    if not event:
+        raise HTTPException(status_code=404, detail=not_found)
+    require_gallery_access(db, event, user)
+    if event.status != EventStatus.READY:
+        raise HTTPException(status_code=409, detail="Event still processing")
+    images = db.query(Image).filter(Image.event_id == event.id).order_by(Image.created_at).all()
+    return _build_response(event, images)
+
 @router.get("/validate/{qr_token}", response_model=EventPageResponse)
 def validate_token(
     qr_token: str,
     db: Session = Depends(get_photo_db),
     user: Optional[CurrentUser] = Depends(get_optional_user),
 ):
-    clean_token = qr_token.strip().lower().lstrip('@')
-    event = db.query(Event).filter(
-        or_(Event.qr_token == clean_token, Event.username == clean_token, Event.id == qr_token)
-    ).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Invalid QR code or Collection Username")
-    require_gallery_access(db, event, user)
-    if event.status != EventStatus.READY:
-        raise HTTPException(status_code=409, detail="Event still processing")
-    images = db.query(Image).filter(Image.event_id == event.id).order_by(Image.created_at).all()
-    return _build_response(event, images)
+    return _gallery(db, qr_token, user, not_found="Invalid QR code or Collection Username")
 
 @router.get("/{event_id}", response_model=EventPageResponse)
 def guest_by_id(
@@ -75,14 +74,4 @@ def guest_by_id(
     db: Session = Depends(get_photo_db),
     user: Optional[CurrentUser] = Depends(get_optional_user),
 ):
-    clean_id = event_id.strip().lower().lstrip('@')
-    event = db.query(Event).filter(
-        or_(Event.id == event_id, Event.qr_token == clean_id, Event.username == clean_id)
-    ).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    require_gallery_access(db, event, user)
-    if event.status != EventStatus.READY:
-        raise HTTPException(status_code=409, detail="Event still processing")
-    images = db.query(Image).filter(Image.event_id == event.id).order_by(Image.created_at).all()
-    return _build_response(event, images)
+    return _gallery(db, event_id, user, not_found="Event not found")

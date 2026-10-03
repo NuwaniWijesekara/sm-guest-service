@@ -13,26 +13,22 @@ def cleanup_expired_records():
     db = GuestSessionLocal()
     now = datetime.utcnow()
     try:
-        # 1. Delete expired Search History records (anonymous guests, 24h)
-        expired_history = db.query(SearchHistory).filter(
-            SearchHistory.expires_at != None,
+        # 1. Expired Search History records (anonymous guests, 24h). Rows
+        # with expires_at NULL never match `<`, so they're kept.
+        deleted_history = db.query(SearchHistory).filter(
             SearchHistory.expires_at < now
-        ).all()
-        if expired_history:
-            for h in expired_history:
-                db.delete(h)
-            db.commit()
-            logger.info(f"Cleanup: Deleted {len(expired_history)} expired search history records.")
+        ).delete(synchronize_session=False)
 
-        # 2. Delete expired Saved Face records (30 days)
-        expired_faces = db.query(SavedFace).filter(
+        # 2. Expired Saved Face records (30 days)
+        deleted_faces = db.query(SavedFace).filter(
             SavedFace.expires_at < now
-        ).all()
-        if expired_faces:
-            for f in expired_faces:
-                db.delete(f)
-            db.commit()
-            logger.info(f"Cleanup: Deleted {len(expired_faces)} expired saved face records.")
+        ).delete(synchronize_session=False)
+
+        db.commit()
+        if deleted_history:
+            logger.info(f"Cleanup: Deleted {deleted_history} expired search history records.")
+        if deleted_faces:
+            logger.info(f"Cleanup: Deleted {deleted_faces} expired saved face records.")
 
     except Exception as e:
         db.rollback()
@@ -47,7 +43,8 @@ def prune_unreferenced_search_history():
     in the photographer DB but were never caught by the event.deleted stream
     (e.g. an Event row removed directly in Postgres, bypassing the API).
     """
-    from ..main import GuestSessionLocal, PhotographerSessionLocal, SearchHistory
+    from ..main import GuestSessionLocal, PhotographerSessionLocal
+    from ..models.guest_models import SearchHistory
     from ..models.photographer_models import Event
 
     guest_db = GuestSessionLocal()
@@ -95,6 +92,6 @@ def cleanup_loop(interval_seconds: int = 3600):
 
 
 def start_cleanup_scheduler(interval_seconds: int = 3600):
-    thread = threading.Thread(target=cleanup_loop, args=(interval_seconds,), daemon=True, name="VectorCleanupDaemon")
+    thread = threading.Thread(target=cleanup_loop, args=(interval_seconds,), daemon=True, name="GuestCleanupDaemon")
     thread.start()
     logger.info("✓ Cleanup background daemon thread scheduled.")

@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
-from datetime import datetime, timedelta
-from ..utils.security import get_guest_db, get_current_user
+from datetime import datetime
+from ..utils.security import CurrentUser, get_guest_db, get_current_user
 from ..models.guest_models import SavedFace
-from ..services.face_engine import face_engine
-from ..config.settings import settings
 
+# Saved faces are only created by selfie searches now (see api/match.py) and
+# surface in the UI through search history. The standalone upload endpoint
+# (POST /guest/saved-faces) was removed: it indexed faces into a separate
+# "saved-faces" Rekognition collection that event searches can never reach.
 router = APIRouter(prefix="/guest/saved-faces", tags=["Saved Faces"])
 
 class SavedFaceOut(BaseModel):
@@ -25,49 +26,17 @@ class SavedFaceUpdate(BaseModel):
 @router.get("", response_model=list[SavedFaceOut])
 def list_saved_faces(
     db: Session = Depends(get_guest_db),
-    current_user = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     faces = db.query(SavedFace).filter(SavedFace.user_id == current_user.id).order_by(SavedFace.created_at.desc()).all()
     return faces
-
-@router.post("", response_model=SavedFaceOut, status_code=status.HTTP_201_CREATED)
-async def create_saved_face(
-    nickname: str = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_guest_db),
-    current_user = Depends(get_current_user)
-):
-    if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
-        raise HTTPException(status_code=415, detail="Invalid image type")
-
-    file_bytes = await file.read()
-    if len(file_bytes) > settings.max_selfie_bytes:
-        raise HTTPException(status_code=413, detail="Selfie too large")
-
-    face_id = face_engine.index_selfie(file_bytes, collection_id="saved-faces")
-    del file_bytes
-
-    if face_id is None:
-        raise HTTPException(status_code=422, detail="No face detected in selfie")
-
-    expires_at = datetime.utcnow() + timedelta(days=30)
-    face = SavedFace(
-        user_id=current_user.id,
-        nickname=nickname,
-        rekognition_face_id=face_id,
-        expires_at=expires_at
-    )
-    db.add(face)
-    db.commit()
-    db.refresh(face)
-    return face
 
 @router.patch("/{face_id}", response_model=SavedFaceOut)
 def update_saved_face(
     face_id: str,
     data: SavedFaceUpdate,
     db: Session = Depends(get_guest_db),
-    current_user = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     face = db.query(SavedFace).filter(
         SavedFace.id == face_id,
@@ -85,7 +54,7 @@ def update_saved_face(
 def delete_saved_face(
     face_id: str,
     db: Session = Depends(get_guest_db),
-    current_user = Depends(get_current_user)
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     face = db.query(SavedFace).filter(
         SavedFace.id == face_id,

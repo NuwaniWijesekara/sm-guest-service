@@ -20,10 +20,6 @@ class FaceEngine:
             )
         return cls._instance
 
-    def load(self):
-        """No-op retained for backwards compatibility."""
-        pass
-
     def search_faces_by_image(self, selfie_bytes: bytes, collection_id: str, threshold: float = 80.0) -> list[dict]:
         """
         Passes guest selfie bytes to boto3.client('rekognition').search_faces_by_image.
@@ -97,5 +93,15 @@ class FaceEngine:
         except ClientError as e:
             logger.error(f"Failed to index selfie: {e}")
             return None
+
+    def delete_collection(self, collection_id: str) -> None:
+        """Delete an event's face collection. Idempotent: an already-missing
+        collection is fine (redelivered event.deleted messages)."""
+        try:
+            self.client.delete_collection(CollectionId=collection_id)
+            logger.info(f"Deleted Rekognition collection {collection_id}")
+        except ClientError as e:
+            if e.response['Error']['Code'] != 'ResourceNotFoundException':
+                raise
 
 face_engine = FaceEngine()
