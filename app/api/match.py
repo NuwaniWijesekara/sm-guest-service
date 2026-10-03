@@ -10,6 +10,7 @@ from ..models.guest_models import SavedFace, SearchHistory
 from ..config.settings import settings
 from ..services.face_engine import face_engine
 from ..services.s3 import s3_service
+from ..utils.access import require_gallery_access
 
 router = APIRouter(prefix="/match", tags=["Selfie Matching"])
 
@@ -43,6 +44,7 @@ async def match_selfie(
     ).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    require_gallery_access(photo_db, event, current_user)
     if event.status != EventStatus.READY:
         raise HTTPException(status_code=409, detail="Event still processing")
     event_id = event.id
@@ -126,8 +128,8 @@ async def match_selfie(
             if row.photo_id not in photo_dict or score > photo_dict[row.photo_id]["similarity_score"]:
                 photo_dict[row.photo_id] = {
                     "photo_id": row.photo_id,
-                    "display_url": s3_service.display_url(row.enhanced_url, row.s3_url, expiration=3600),
-                    "thumbnail_url": s3_service.generate_presigned_url(row.thumbnail_url, expiration=3600) if row.thumbnail_url else None,
+                    "display_url": s3_service.display_url(row.enhanced_url, row.s3_url, expiration=settings.photo_url_ttl_seconds),
+                    "thumbnail_url": s3_service.generate_presigned_url(row.thumbnail_url, expiration=settings.photo_url_ttl_seconds) if row.thumbnail_url else None,
                     "similarity_score": round(float(score), 4)
                 }
 

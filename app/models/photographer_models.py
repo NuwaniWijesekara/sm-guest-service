@@ -38,8 +38,17 @@ class Event(PhotographerBase):
     owner_id        = Column(String, ForeignKey("users.id"), nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
     total_photos    = Column(Integer, default=0)
+    access_mode     = Column(String, nullable=False, default="public")  # "public" | "invite_only"
     owner           = relationship("User", back_populates="events")
     images          = relationship("Image", back_populates="event", cascade="all, delete-orphan")
+
+class EventCollaborator(PhotographerBase):
+    """Read-only mirror — owned by sm-photographer-service. Doubles as an
+    invite-only event's guest list (see utils/access.py)."""
+    __tablename__ = "event_collaborators"
+    id         = Column(String, primary_key=True, default=_uuid)
+    event_id   = Column(String, ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id    = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
 class Image(PhotographerBase):
     __tablename__ = "images"

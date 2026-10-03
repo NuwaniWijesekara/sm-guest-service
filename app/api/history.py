@@ -8,6 +8,8 @@ from ..models.guest_models import SearchHistory
 from ..models.photographer_models import Event
 
 from ..services.s3 import s3_service
+from ..utils.access import has_gallery_access
+from ..config.settings import settings
 
 router = APIRouter(prefix="/guest/history", tags=["Search History"])
 
@@ -47,10 +49,14 @@ def get_search_history(
 
     res = []
     for h in history:
+        # Access can be revoked (or an event switched to invite-only) after
+        # the search ran — never re-serve photos the caller can't see now.
+        if h.event_id in events and not has_gallery_access(photo_db, events[h.event_id], current_user):
+            continue
         ev_out = None
         if h.event_id in events:
             ev = events[h.event_id]
-            cover_url = s3_service.generate_presigned_url(ev.cover_photo_url, expiration=3600) if ev.cover_photo_url else None
+            cover_url = s3_service.generate_presigned_url(ev.cover_photo_url, expiration=settings.photo_url_ttl_seconds) if ev.cover_photo_url else None
             ev_out = EventHistoryOut(
                 id=ev.id,
                 name=ev.name,
@@ -64,8 +70,8 @@ def get_search_history(
                 id=p.get("id", ""),
                 # History rows written before display copies existed only
                 # stored "s3_url" — fall back to it for those.
-                display_url=s3_service.display_url(p.get("display_url"), p.get("s3_url"), expiration=3600),
-                thumbnail_url=s3_service.generate_presigned_url(p.get("thumbnail_url"), expiration=3600) if p.get("thumbnail_url") else None
+                display_url=s3_service.display_url(p.get("display_url"), p.get("s3_url"), expiration=settings.photo_url_ttl_seconds),
+                thumbnail_url=s3_service.generate_presigned_url(p.get("thumbnail_url"), expiration=settings.photo_url_ttl_seconds) if p.get("thumbnail_url") else None
             )
             for p in (h.matched_photos or [])
         ]

@@ -20,5 +20,8 @@ class Settings(BaseSettings):
     jwt_algorithm:             str   = "HS256"
     jwt_expire_minutes:        int   = 10080
     google_client_id:          str   = ""
+    # Lifetime of presigned photo URLs handed to guests. Kept short so a
+    # leaked/forwarded URL stops working soon after access is revoked.
+    photo_url_ttl_seconds:     int   = 900
 
 settings = Settings()
