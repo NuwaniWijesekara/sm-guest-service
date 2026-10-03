@@ -21,7 +21,7 @@ class EventOut(BaseModel):
 
 class PhotoOut(BaseModel):
     id: str
-    s3_url: str
+    display_url: str
     thumbnail_url: Optional[str] = None
 
 class EventPageResponse(BaseModel):
@@ -42,7 +42,7 @@ def _build_response(event, images) -> EventPageResponse:
         photos=[
             PhotoOut(
                 id=img.id,
-                s3_url=s3_service.generate_presigned_url(img.s3_url, expiration=3600),
+                display_url=s3_service.display_url(img.enhanced_url, img.s3_url, expiration=3600),
                 thumbnail_url=s3_service.generate_presigned_url(img.thumbnail_url, expiration=3600) if img.thumbnail_url else None
             )
             for img in images

@@ -23,7 +23,7 @@ class EventHistoryOut(BaseModel):
 
 class PhotoHistoryOut(BaseModel):
     id: str
-    s3_url: str
+    display_url: str
     thumbnail_url: Optional[str] = None
 
 class SearchHistoryOut(BaseModel):
@@ -62,7 +62,9 @@ def get_search_history(
         photos_out = [
             PhotoHistoryOut(
                 id=p.get("id", ""),
-                s3_url=s3_service.generate_presigned_url(p.get("s3_url"), expiration=3600),
+                # History rows written before display copies existed only
+                # stored "s3_url" — fall back to it for those.
+                display_url=s3_service.display_url(p.get("display_url"), p.get("s3_url"), expiration=3600),
                 thumbnail_url=s3_service.generate_presigned_url(p.get("thumbnail_url"), expiration=3600) if p.get("thumbnail_url") else None
             )
             for p in (h.matched_photos or [])

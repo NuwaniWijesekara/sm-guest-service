@@ -15,7 +15,7 @@ router = APIRouter(prefix="/match", tags=["Selfie Matching"])
 
 class MatchResultOut(BaseModel):
     photo_id: str
-    s3_url: str
+    display_url: str
     thumbnail_url: Optional[str] = None
     similarity_score: float
 
@@ -113,6 +113,7 @@ async def match_selfie(
         rows = photo_db.query(
             Image.id.label("photo_id"),
             Image.s3_url,
+            Image.enhanced_url,
             Image.thumbnail_url,
             Face.rekognition_face_id
         ).join(Face, Face.image_id == Image.id)\
@@ -125,7 +126,7 @@ async def match_selfie(
             if row.photo_id not in photo_dict or score > photo_dict[row.photo_id]["similarity_score"]:
                 photo_dict[row.photo_id] = {
                     "photo_id": row.photo_id,
-                    "s3_url": s3_service.generate_presigned_url(row.s3_url, expiration=3600),
+                    "display_url": s3_service.display_url(row.enhanced_url, row.s3_url, expiration=3600),
                     "thumbnail_url": s3_service.generate_presigned_url(row.thumbnail_url, expiration=3600) if row.thumbnail_url else None,
                     "similarity_score": round(float(score), 4)
                 }
@@ -144,7 +145,7 @@ async def match_selfie(
             event_id=event_id,
             rekognition_face_id=primary_face_id,
             matched_photos=[
-                {"id": m.photo_id, "s3_url": m.s3_url, "thumbnail_url": m.thumbnail_url}
+                {"id": m.photo_id, "display_url": m.display_url, "thumbnail_url": m.thumbnail_url}
                 for m in matches
             ],
             expires_at=expires_at

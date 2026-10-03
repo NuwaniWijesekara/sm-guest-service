@@ -56,6 +56,13 @@ class S3Service:
             key = clean_url.lstrip('/')
         return unquote(key)
 
+    def display_url(self, enhanced_url: str | None, s3_url: str | None, expiration: int = 3600) -> str | None:
+        """Presigned URL for the version guests should see: the display copy
+        (watermarked for watermarked events), falling back to the original for
+        images ingested before display copies existed. Guests are never handed
+        the original when a display copy is available."""
+        return self.generate_presigned_url(enhanced_url or s3_url, expiration=expiration)
+
     def generate_presigned_url(self, url_or_key: str | None, expiration: int = 3600) -> str | None:
         if not url_or_key:
             return None

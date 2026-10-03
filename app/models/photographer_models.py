@@ -47,6 +47,7 @@ class Image(PhotographerBase):
     event_id       = Column(String, ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
     s3_url         = Column(String, nullable=False)
     thumbnail_url  = Column(String, nullable=True)
+    enhanced_url   = Column(String, nullable=True)
     filename       = Column(String, nullable=False)
     created_at     = Column(DateTime, default=datetime.utcnow)
     event          = relationship("Event", back_populates="images")
