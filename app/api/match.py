@@ -143,8 +143,6 @@ async def match_selfie(
 
     # Log search history — writes to guest DB
     try:
-        expires_at = datetime.utcnow() + timedelta(hours=24) if current_user.is_anonymous else None
-
         history = SearchHistory(
             user_id=current_user.id,
             event_id=event_id,
@@ -153,7 +151,6 @@ async def match_selfie(
                 {"id": m.photo_id, "display_url": m.display_url, "thumbnail_url": m.thumbnail_url}
                 for m in matches
             ],
-            expires_at=expires_at
         )
         guest_db.add(history)
         guest_db.commit()

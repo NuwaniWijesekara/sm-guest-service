@@ -1,8 +1,10 @@
 """Per-event guest gallery access control.
 
 An event's `access_mode` (set by its owner in sm-photographer-service) is
-either "public" — anyone holding the link/QR/username — or "invite_only":
-only the owner, or a collaborator signed in with a verified email. Only a
+either "public" — anyone holding the link/QR/username can browse, no account
+needed — or "invite_only": only the owner, or a collaborator signed in with
+a verified email. Selfie search and search history always need a signed-in
+account regardless (they depend on `get_current_user`). Only a
 Google sign-in currently yields `email_verified` (password signup never
 proves email ownership), so invite-only guests must use Google.
 
@@ -32,7 +34,7 @@ def _denial(event, user: Optional[CurrentUser], db: Session) -> Optional[HTTPExc
     """None if `user` may see `event`'s photos, else the error to raise."""
     if (event.access_mode or PUBLIC) == PUBLIC:
         return None
-    if user is None or user.is_anonymous:
+    if user is None:
         return HTTPException(status_code=401, detail={
             "code": "login_required",
             "message": "This gallery is invite-only. Sign in with Google to continue.",

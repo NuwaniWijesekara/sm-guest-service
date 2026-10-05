@@ -8,7 +8,7 @@ GuestBase = declarative_base()
 def _uuid():
     return str(uuid.uuid4())
 
-# There is no local user table here anymore — every user (anonymous or not)
+# There is no local user table here anymore — every user
 # lives in the unified `users` table owned by sm-photographer-service.
 # `user_id` below is that table's id, stored as a plain string (not a FK:
 # it's a different physical database — see PHOTOGRAPHER_DATABASE_URL, which
