@@ -16,7 +16,6 @@ class CurrentUser:
     id: str
     email: str
     name: str
-    is_anonymous: bool
     # True only for Google sign-ins — see create_access_token in
     # sm-photographer-service. Required for invite-only galleries.
     email_verified: bool = False
@@ -49,21 +48,28 @@ def get_current_user(
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+    # Anonymous sessions were removed; a still-unexpired token from the old
+    # POST /auth/anonymous must not keep granting access.
+    if payload.get("is_anonymous"):
+        raise HTTPException(status_code=401, detail={
+            "code": "login_required",
+            "message": "Please sign in to continue.",
+        })
+
     return CurrentUser(
         id=user_id,
         email=payload.get("email", ""),
         name=payload.get("name", ""),
-        is_anonymous=bool(payload.get("is_anonymous", False)),
         email_verified=payload.get("email_verified") is True,
     )
 
 def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_oauth2_scheme),
 ) -> Optional[CurrentUser]:
-    """The caller if they sent a valid token, else None — for endpoints
-    that public events serve without login. A missing, expired or invalid
-    token is treated as "not signed in" rather than a 401, so a stale token
-    in the browser never blocks a public gallery."""
+    """The caller if they sent a valid account token, else None — for
+    endpoints that public events serve without login. A missing, expired,
+    invalid or anonymous token is treated as "not signed in" rather than a
+    401, so a stale token in the browser never blocks a public gallery."""
     if credentials is None:
         return None
     try:

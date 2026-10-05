@@ -13,8 +13,9 @@ def cleanup_expired_records():
     db = GuestSessionLocal()
     now = datetime.utcnow()
     try:
-        # 1. Expired Search History records (anonymous guests, 24h). Rows
-        # with expires_at NULL never match `<`, so they're kept.
+        # 1. Expired Search History records — only rows left over from the
+        # removed anonymous sessions (24h) carry one. Rows with expires_at
+        # NULL never match `<`, so they're kept.
         deleted_history = db.query(SearchHistory).filter(
             SearchHistory.expires_at < now
         ).delete(synchronize_session=False)
